@@ -1,0 +1,85 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Luc Adrichem"
+date: "24 februari 2016"
+output: html_document
+---
+
+### Synopsis
+
+Hi there. For this assignment I have made a machine learning algorithm based on the Weight Lifting Exercise Datase, kindly provided by http://groupware.les.inf.puc-rio.br/har. Some background infO:
+
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+My goal is to predict the the "classe" variable, using any of the other variables to predict with.
+
+``` {r}
+# Let's start with loading the required libs
+library(caret)
+library(ranger)
+library(e1071)
+library(knitr)
+
+# And load the data
+training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"), na.strings = c("NA", ""))
+testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"), na.strings = c("NA", ""))
+
+# Let's see what we are working with
+dim(training)
+summary(training$classe)
+training[10,1:20]
+```
+So there's 19622 observations on 160 different variables. That's quite a lot. The "classe" variable seems to consist of five levels, reffering to:
+
+- A - exactly according to the specification lifting the dumbbell only halfway 
+- B - throwing the elbows to the front
+- C - lifting the dumbbell only halfway
+- D - lowering the dumbbell only halfway
+- E - throwing the hips to the front
+
+A first thing to do is clean up the datasets. Building a machine learning algorithm can be rather time consuming, so I would prefer to only work with the variables that might increase our ability to predict. 
+
+Let's start with removing the first six rows, which are only index, timestaps, usernames, etc. These won't contribute to our prediction.
+```{r}
+training <- training[,7:160]
+testing <- testing[,7:160]
+```
+It also strikes me that there are some NA's in the 10th row of the training set that we looked at. Let's look at which variables show less than rougly 50% NA values.
+```{r}
+mostlyNotNA <- apply(!is.na(training), 2, sum) > 10000
+table(mostlyNotNA)
+```
+So there are 100 variables that show more than 10000 NA values. We can leave these out as well.
+```{r}
+training <- training[,mostlyNotNA]
+testing <- testing[,mostlyNotNA]
+```
+Great. No we have a much smaller set. Since we have a lot of observations, I think we can split the training set into a training and validation set. From thereon we can train a model on the training set, and validate it on the validation set.
+```{r}
+inTrain <- createDataPartition(y = training$classe, p = 0.7, list = F)
+train <- training[inTrain,]
+validate <- training[-inTrain,]
+```
+My preferred machine learning algorithm is mostly a random forest. In my experience random forests give the highest prediction accuracy, so I choose to start with building one and see how is works out on the training set.
+
+A good next step is to choose a cross validation strategy. I want to make sure that the model I train on the training set does a good job at predicting on the test set. To make sure the model is not overfitting the training data, I choose to include repeated K-fold Cross Validation. This means that I split the data into k-folds a number of times, and repeat that a number of times. 
+
+There is a tradeoff using K-folds Cross Validation: a larger k yields less bias, but more variance. A lower k yield the opposite: more bias, less variance. To level this out, I set k at 5 and choose to repeat this process twice.
+
+Training a random forest can take quite some time. To increase the training speed, I use the "ranger" method from the Ranger package. Check it out, it's a lot faster than the regular "rf" method from the RandomForest package.
+```{r, cache=TRUE}
+fit_rf <- train(classe ~., data = train, method = "ranger",
+                trControl = trainControl(method = "repeatedcv", number = 3, repeats = 2))
+fit_rf
+```
+That looks pretty good. An accuracy of around 99 percent is pretty much spot on. To estimate the out of sample error we can let the model predict on the validation set.
+```{r}
+pred_val <- predict(fit_rf, validate[,-54])
+confusionMatrix(pred_val, validate[,54])$table; confusionMatrix(pred_val, validate[,54])$overall[1]
+```
+That looks fine to me. An accuracy of 99.8% on the validation set, that means that the out of sample error is not even 0.2 percent. Now I'm confident tenough to predict on the testing set. There will be the answers I will be submitting for grading as well.
+```{r}
+pred_test <- predict(fit_rf, testing[,-54])
+pred_test
+```
